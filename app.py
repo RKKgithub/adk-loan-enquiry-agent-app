@@ -2,6 +2,7 @@ import streamlit as st
 from vertexai import Client
 import uuid
 from dotenv import load_dotenv
+import os
 load_dotenv()
 
 
