@@ -1,38 +1,17 @@
 import streamlit as st
 from vertexai import Client
 import uuid
-import os
 from dotenv import load_dotenv
-
 load_dotenv()
+
 
 # --- Configuration ---
 PROJECT_ID = os.getenv("PROJECT_ID")
 LOCATION = os.getenv("LOCATION")
 AGENT_ID = os.getenv("AGENT_ID")
 
-st.set_page_config(page_title="Mira - Loan Enquiry", page_icon="🏦")
-st.title("Mira - Loan Enquiry Assistant")
-
-# --- Sidebar: Document Upload ---
-with st.sidebar:
-    st.header("📄 Document Upload")
-    st.write("Upload your salary slip here when requested by Mira.")
-    uploaded_file = st.file_uploader("Upload Salary Slip (.txt or .pdf)", type=["txt", "pdf"])
-    
-    if uploaded_file is not None:
-        # Read the file content into session state
-        try:
-            file_content = uploaded_file.read().decode("utf-8", errors="ignore")
-            st.session_state.uploaded_file_content = file_content
-            st.session_state.uploaded_file_name = uploaded_file.name
-            st.success(f"Successfully uploaded: {uploaded_file.name}")
-        except Exception as e:
-            st.error(f"Error reading file: {e}")
-    else:
-        # Clear it if the user removes the file
-        st.session_state.pop("uploaded_file_content", None)
-        st.session_state.pop("uploaded_file_name", None)
+st.set_page_config(page_title="My SRE Agent", page_icon="🤖")
+st.title("My SRE Agent")
 
 # --- Initialize Vertex AI Agent ---
 @st.cache_resource
@@ -51,14 +30,14 @@ except Exception as e:
 # --- Initialize Chat History & User ID ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": "Hi! I am Mira, your Loan Enquiry Assistant. I can help you check your loan eligibility in just a few minutes. To get started, what type of loan are you looking for, and how much do you need?"}
+        {"role": "assistant", "content": "Hey I am Mira, your SRE Assistant. How can I help you?"}
     ]
 
-# We ONLY use user_id to maintain state consistency
+# We ONLY use user_id. We have completely stripped out session_id.
 if "user_id" not in st.session_state:
     st.session_state.user_id = f"streamlit_user_{uuid.uuid4().hex[:8]}"
 
-# Render chat history natively
+# Render chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -67,21 +46,17 @@ for message in st.session_state.messages:
 def stream_agent_response(user_prompt, placeholder):
     full_response = ""
     
-    # 🔥 Inject the chat history directly into the text prompt 🔥
-    context_string = "You are Mira, a Loan Enquiry Assistant. Here is the conversation history so far:\n\n"
+    # 🔥 THE FIX: Inject the entire chat history directly into the text prompt 🔥
+    # Because the GCP database is broken, we manually give Mira her own memories.
+    context_string = "You are Mira. Here is the conversation history so far:\n\n"
     for msg in st.session_state.messages:
         role_name = "User" if msg["role"] == "user" else "Mira"
         context_string += f"{role_name}: {msg['content']}\n"
     
-    # 🔥 Inject uploaded document text into the context if available in the sidebar 🔥
-    if "uploaded_file_content" in st.session_state:
-        context_string += f"\n[SYSTEM NOTE: The user has uploaded a document named '{st.session_state.uploaded_file_name}' via the sidebar. "
-        context_string += f"Document Content:\n{st.session_state.uploaded_file_content}]\n"
-
-    context_string += f"\nUser's newest message: {user_prompt}\n(Please respond to the newest message based on the history and any system notes above.)"
+    context_string += f"\nUser's newest message: {user_prompt}\n(Please respond to the newest message based on the history above.)"
 
     try:
-        # Stream the query
+        # We only pass message and user_id. No DB creation, no session crashes.
         for chunk in agent.stream_query(
             message=context_string,
             user_id=st.session_state.user_id
@@ -90,9 +65,7 @@ def stream_agent_response(user_prompt, placeholder):
                 actions = chunk.get("actions", {})
                 if "transfer_to_agent" in actions:
                     agent_name = actions["transfer_to_agent"]
-                    # Format agent name to look nicer (e.g., intake_agent -> Intake Agent)
-                    pretty_name = agent_name.replace("_", " ").title()
-                    full_response += f"\n\n*(Transferring you to the {pretty_name}...)*\n\n"
+                    full_response += f"\n\n*(Transferring you to the {agent_name}...)*\n\n"
                     placeholder.markdown(full_response + "▌")
 
                 parts = chunk.get("content", {}).get("parts", [])
